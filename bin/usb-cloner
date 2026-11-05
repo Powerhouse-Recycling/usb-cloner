@@ -89,6 +89,14 @@ in_use() {
 }
 
 size_of()  { blockdev --getsize64 "$1"; }
+# "USB3" or "USB2" from the negotiated link speed in sysfs. A USB 3 stick
+# seated slowly often links at USB 2.0 and runs at a third of its speed.
+link_of() {
+    local s
+    s=/sys$(udevadm info -q path -n "$1" 2>/dev/null)
+    while [[ $s != / && ! -r $s/speed ]]; do s=$(dirname "$s"); done
+    if [[ -r $s/speed ]] && (( $(cat "$s/speed") >= 5000 )); then printf 'USB3'; else printf 'USB2'; fi
+}
 model_of() { lsblk -dno VENDOR,MODEL "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'; }
 human()    { numfmt --to=iec --suffix=B "$1"; }
 
@@ -137,7 +145,8 @@ show_plan() {
         printf 'MASTER:  (waiting for a drive in the master port)\n'
     else
         msize=$(size_of "$MASTER")
-        printf 'MASTER:  %-10s %-9s %s  [%s]\n' "$MASTER" "$(human "$msize")" "$(model_of "$MASTER")" "$MASTER_PORT"
+        printf 'MASTER:  %-10s %-9s %-4s %s  [%s]\n' "$MASTER" "$(human "$msize")" "$(link_of "$MASTER")" "$(model_of "$MASTER")" "$MASTER_PORT"
+        [[ $(link_of "$MASTER") == USB2 ]] && printf '         !! master linked at USB 2.0: pull it and push it in firmly for full speed\n'
         if in_use "$MASTER"; then
             printf '         !! master is mounted. Refusing to continue.\n'
             MASTER=""
@@ -149,7 +158,7 @@ show_plan() {
     fi
     for i in "${!TARGETS[@]}"; do
         d=${TARGETS[$i]}; sz=$(size_of "$d")
-        printf '  %-10s %-9s %-28.28s [%s]' "$d" "$(human "$sz")" "$(model_of "$d")" "${TARGET_PORTS[$i]}"
+        printf '  %-10s %-9s %-4s %-24.24s [%s]' "$d" "$(human "$sz")" "$(link_of "$d")" "$(model_of "$d")" "${TARGET_PORTS[$i]}"
         if in_use "$d"; then
             printf '  SKIP: mounted\n'
         elif [[ -n $MASTER && $sz -lt $msize ]]; then
@@ -230,10 +239,17 @@ clone_all() {
     else
         "$DD" if="$MASTER" bs="$BLOCK_SIZE" iflag=fullblock status=progress | tee -p "${fifos[@]}" "$TMP/hash" > /dev/null || rc=$?
     fi
-    (( rc != 0 )) && printf '!! read error on master (exit %d). Results below are unreliable.\n' "$rc"
+    MASTER_FAILED=0
+    if (( rc != 0 )); then
+        MASTER_FAILED=1
+        printf '\n!! READ ERROR ON THE MASTER (exit %d). The master drive is bad; replace it.\n' "$rc"
+        printf '   Nothing written in this batch is usable.\n'
+    fi
 
     for i in "${ELIGIBLE[@]}"; do
-        if wait "${wpids[$i]}"; then
+        if (( MASTER_FAILED )); then
+            RESULT[i]="FAILED: master read error"
+        elif wait "${wpids[$i]}"; then
             RESULT[i]=written
         else
             RESULT[i]="WRITE FAILED: $(tail -n1 "$TMP/w$i.err" 2>/dev/null | cut -c1-60)"
@@ -290,10 +306,10 @@ report() {
     ts=$(date '+%Y-%m-%d %H:%M:%S')
     mkdir -p "$LOG_DIR"
     log="$LOG_DIR/$(date +%Y-%m).log"
-    printf '\n%-10s %-30s %s\n' DEVICE PORT RESULT
+    printf '\n%-10s %-12s %-4s %s\n' DEVICE PORT LINK RESULT
     for i in "${ELIGIBLE[@]}"; do
         d=${TARGETS[$i]}
-        line=$(printf '%-10s %-30s %s' "$d" "${TARGET_PORTS[$i]}" "${RESULT[$i]}")
+        line=$(printf '%-10s %-12s %-4s %s' "$d" "${TARGET_PORTS[$i]}" "$(link_of "$d")" "${RESULT[$i]}")
         printf '%s\n' "$line"
         printf '%s master=%s(%s) sha=%s %s\n' "$ts" "$(model_of "$MASTER")" "$(human "$(size_of "$MASTER")")" "${MASTER_SHA:0:16}" "$line" >> "$log"
     done
@@ -364,7 +380,9 @@ while true; do
     armed=0
 
     clone_all
-    if (( VERIFY )); then
+    if (( MASTER_FAILED )); then
+        :   # nothing to verify; every target is already marked failed
+    elif (( VERIFY )); then
         verify_all
     else
         for i in "${ELIGIBLE[@]}"; do [[ ${RESULT[$i]} == written ]] && RESULT[i]="PASS (unverified)"; done

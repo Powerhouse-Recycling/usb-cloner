@@ -89,6 +89,13 @@ in `cloner.conf.example`.
 The batch runs at the speed of the slowest drive in it, same as the StarTech.
 A full-size copy is made even if the master is mostly empty.
 
+Every drive on the screen shows its negotiated link, USB3 or USB2. A USB 3
+stick that links at USB2 was usually seated slowly: pull it and push it in
+firmly. The screen warns when the master is on USB2, because a USB 2.0
+master read (about 35 MB/s) caps all the writers together. Cheap sticks
+that are USB 2.0 devices by design show USB2 in any port; nothing fixes
+that except better sticks, and one slow stick sets the pace of its batch.
+
 ## Safety rules the script enforces
 
 - Only whole disks attached over USB are ever considered. The internal
