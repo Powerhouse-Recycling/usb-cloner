@@ -117,7 +117,7 @@ hw_id() {
 banner() {
     clear
     printf '=== USB CLONER ===  master socket -> all other USB sockets, sector for sector\n'
-    printf 'Machine: %s    Master ports: %s\n' "$(hw_id)" "${MASTER_PORTS:-NONE MAPPED}"
+    printf 'Machine: %s    IP: %s    Master ports: %s\n' "$(hw_id)" "$(hostname -I 2>/dev/null | awk '{print $1}')" "${MASTER_PORTS:-NONE MAPPED}"
     case $TRIGGER in
         master)    printf 'Start: blanks in first, then insert the master (or: usb-cloner go)\n\n' ;;
         countdown) printf 'Start: automatically %ds after the last drive is inserted (or: usb-cloner go)\n\n' "$AUTOSTART_SECONDS" ;;
