@@ -46,7 +46,7 @@ On the M70q, as root (or `sudo -i`):
 
 ```bash
 apt-get install -y git
-git clone <this repo> /opt/usb-cloner
+git clone https://github.com/Powerhouse-Recycling/usb-cloner.git /opt/usb-cloner
 cd /opt/usb-cloner
 ./install.sh
 usb-cloner-map
