@@ -4,10 +4,18 @@
 # Everything else on USB is treated as a blank and will be overwritten.
 MASTER_PORTS=""
 
-# 0 = wait for Enter on the keyboard before writing.
-# N = start automatically N seconds after master + targets are detected
-#     (for running without a keyboard; removing a drive aborts the countdown).
-AUTOSTART_SECONDS=0
+# How a batch starts. In every mode `sudo usb-cloner go` (e.g. over SSH)
+# also starts the current batch.
+#   master    - blanks in first, then insert the master. The master going in
+#               is the "go". Starts AUTOSTART_SECONDS later; pulling a drive
+#               in that window aborts. If the master was in before the blanks,
+#               pull it and reinsert. Never starts by itself after a reboot.
+#   countdown - starts AUTOSTART_SECONDS after the drive set stops changing,
+#               in any order. Convenient, but a slow hand inserting blanks can
+#               start a batch early.
+#   enter     - wait for Enter on a keyboard.
+TRIGGER=master
+AUTOSTART_SECONDS=5
 
 # Read back every target and compare its hash to the master's. Keep this on.
 VERIFY=1

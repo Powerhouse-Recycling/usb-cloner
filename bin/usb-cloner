@@ -12,12 +12,21 @@ set -euo pipefail
 
 CONF=/etc/usb-cloner/cloner.conf
 MASTER_PORTS=""        # space-separated ID_PATH prefixes, set by usb-cloner-map
-AUTOSTART_SECONDS=0    # 0 = wait for Enter; N = start automatically after N s
+TRIGGER=master         # master | countdown | enter   (see cloner.conf.example)
+AUTOSTART_SECONDS=5    # grace period before an automatic start
 BLOCK_SIZE=4M
 VERIFY=1
 LOG_DIR=/var/log/usb-cloner
+GO_FILE=/run/usb-cloner/go   # `usb-cloner go` touches this to start the batch
 # shellcheck disable=SC1090
 [[ -r $CONF ]] && . "$CONF"
+
+# `usb-cloner go`: start the current batch from another shell (e.g. over SSH).
+if [[ ${1:-} == go ]]; then
+    [[ $EUID -eq 0 ]] || { echo "must run as root: sudo usb-cloner go" >&2; exit 1; }
+    mkdir -p "$(dirname "$GO_FILE")" && touch "$GO_FILE" && echo "go signalled"
+    exit 0
+fi
 
 TMP=""
 BG_PIDS=()
@@ -91,7 +100,12 @@ scan() {
 banner() {
     clear
     printf '=== USB CLONER ===  master port -> all other USB ports, sector for sector\n'
-    printf 'Master ports: %s\n\n' "${MASTER_PORTS:-NONE MAPPED (run usb-cloner-map)}"
+    printf 'Master ports: %s\n' "${MASTER_PORTS:-NONE MAPPED (run usb-cloner-map)}"
+    case $TRIGGER in
+        master)    printf 'Start: blanks in first, then insert the master (or: usb-cloner go)\n\n' ;;
+        countdown) printf 'Start: automatically %ds after the last drive is inserted (or: usb-cloner go)\n\n' "$AUTOSTART_SECONDS" ;;
+        *)         printf 'Start: press ENTER (or: usb-cloner go)\n\n' ;;
+    esac
 }
 
 # Prints the current plan. Sets ELIGIBLE[] (indices into TARGETS that can be written).
@@ -133,18 +147,28 @@ plan_signature() {
     printf '%s|%s' "$MASTER" "${TARGETS[*]:-}"
 }
 
-# Wait until the operator says go. Re-scans every second so drives can be
+go_signalled() {
+    [[ -e $GO_FILE ]] || return 1
+    rm -f "$GO_FILE"
+    printf '\nstart requested via usb-cloner go\n'
+    return 0
+}
+
+# Wait until the batch should start. Re-scans every second so drives can be
 # added or removed while waiting. Returns 0 to start, 1 if the set changed.
+#   auto=1: count down AUTOSTART_SECONDS, then start.
+#   auto=0: wait for Enter or `usb-cloner go` only.
 wait_for_go() {
-    local sig left
+    local auto=$1 sig left
     sig=$(plan_signature)
     left=$AUTOSTART_SECONDS
     while true; do
-        if (( AUTOSTART_SECONDS > 0 )); then
+        go_signalled && return 0
+        if (( auto )); then
             printf '\rStarting in %2ds (remove a drive to abort) ... ' "$left"
             if (( left <= 0 )); then printf '\n'; return 0; fi
         else
-            printf '\rPress ENTER to clone %d drive(s). ' "${#ELIGIBLE[@]}"
+            printf '\rWaiting (%d drive(s) ready). ' "${#ELIGIBLE[@]}"
         fi
         if read -r -t 1; then printf '\n'; return 0; fi
         scan
@@ -275,6 +299,12 @@ wait_until_targets_removed() {
 
 [[ $EUID -eq 0 ]] || die "must run as root"
 [[ -n $MASTER_PORTS ]] || { banner; die "no master port mapped. Run: usb-cloner-map"; }
+mkdir -p "$(dirname "$GO_FILE")"; rm -f "$GO_FILE"
+
+# TRIGGER=master: "armed" means the master has been absent since the last
+# batch, so its next appearance is a deliberate "go". Starts disarmed, so a
+# reboot with everything plugged in never clones on its own.
+armed=0
 
 while true; do
     # Wait for a master and at least one eligible target.
@@ -282,11 +312,23 @@ while true; do
         scan
         banner
         show_plan
-        [[ -n $MASTER && ${#ELIGIBLE[@]} -gt 0 ]] && break
+        [[ -z $MASTER ]] && armed=1
+        if [[ -n $MASTER && ${#ELIGIBLE[@]} -gt 0 ]]; then
+            if [[ $TRIGGER == master && $armed -eq 0 ]]; then
+                printf 'Master was inserted before the blanks. Remove it and insert it again to start.\n'
+                go_signalled && break
+            else
+                break
+            fi
+        fi
         sleep 1
     done
 
-    wait_for_go || continue
+    case $TRIGGER in
+        master|countdown) wait_for_go 1 || continue ;;
+        *)                wait_for_go 0 || continue ;;
+    esac
+    armed=0
 
     clone_all
     if (( VERIFY )); then

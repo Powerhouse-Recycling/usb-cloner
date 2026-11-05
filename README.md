@@ -7,16 +7,16 @@ flash drive duplicator, replacing a StarTech USB duplicator.
 - Sector-for-sector copy. No images are made or stored. The master is read
   once and streamed to every blank at the same time.
 - Every blank is read back and hashed against the master. PASS/FAIL per port.
-- Boots straight into the cloner on the console. Press Enter to clone, pull
-  the drives, insert the next batch.
+- Boots straight into the cloner on the console. No keyboard needed:
+  blanks in, master in, it goes. Pull the drives, insert the next batch.
 
 ## Hardware
 
 - Lenovo ThinkCentre M70q, any storage for the OS (nothing else lives on it).
 - A monitor on HDMI/DisplayPort for the status screen.
-- A USB keyboard for the Enter key, **or** set `AUTOSTART_SECONDS` in the
-  config and run without one. The M70q front has both a USB-A and a USB-C
-  port; a keyboard can sit on whichever one is not the master port.
+- No keyboard. The default trigger is inserting the master. If you want
+  Enter-to-start instead, set `TRIGGER=enter` and put a keyboard on the
+  front USB-C port (through an adapter) so the rear ports stay free.
 - The rear ports on some M70q generations are a mix of USB 3.2 and USB 2.0.
   USB 2.0 caps a stick at roughly 35 MB/s. `usb-cloner-map` prints the link
   speed it sees, so you can find out which is which.
@@ -65,13 +65,21 @@ From now on the box boots into the cloner. Log in over SSH for maintenance.
 
 ## Daily use
 
-1. Master in the front port. Blanks in the rear ports.
-2. The screen lists the master and every blank with size and port. Blanks
-   smaller than the master are listed as SKIP and left untouched.
-3. Press Enter. Progress shows for the write, then dots for the verify.
-4. Read the result table: `PASS`, `WRITE FAILED` or `VERIFY FAILED` per port.
+1. Blanks in the rear ports. The screen lists each one with size and port.
+   Blanks smaller than the master are listed as SKIP and left untouched.
+2. Master in the front port. A 5 second countdown starts; pulling any drive
+   aborts it. Then progress shows for the write, and dots for the verify.
+3. Read the result table: `PASS`, `WRITE FAILED` or `VERIFY FAILED` per port.
    Throw away failed drives.
-5. Pull the blanks. The screen resets for the next batch. The master can stay.
+4. Pull the master and the blanks. The screen resets for the next batch.
+
+The master going in is the "go". If it was already in before the blanks,
+the screen says so; pull it and reinsert. A reboot with drives plugged in
+never starts a batch by itself.
+
+Over SSH, `sudo usb-cloner go` starts whatever is currently plugged in,
+in any trigger mode. The other modes (`countdown`, `enter`) are described
+in `cloner.conf.example`.
 
 The batch runs at the speed of the slowest drive in it, same as the StarTech.
 A full-size copy is made even if the master is mostly empty.
