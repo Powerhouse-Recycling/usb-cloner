@@ -20,6 +20,5 @@ systemctl daemon-reload
 systemctl enable usb-cloner.service
 
 echo
-echo "Installed. Next:"
-echo "  1. usb-cloner-map              # record the front port as the master port"
-echo "  2. systemctl start usb-cloner  # or reboot; the cloner takes over tty1"
+echo "Installed. Next: systemctl start usb-cloner (or reboot)."
+echo "On first start the screen asks you to insert one drive into the master socket."

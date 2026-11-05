@@ -49,19 +49,24 @@ apt-get install -y git
 git clone https://github.com/Powerhouse-Recycling/usb-cloner.git /opt/usb-cloner
 cd /opt/usb-cloner
 ./install.sh
-usb-cloner-map
-```
-
-`usb-cloner-map` asks you to remove all drives, then insert one into the
-front port, and records that port as the master port. A USB 2.0 drive and
-a USB 3.x drive in the same socket show up on different port paths, so run
-it once with each kind if you use both. Then:
-
-```bash
 systemctl start usb-cloner
 ```
 
+On first start the screen asks you to remove all USB drives and insert one
+into the socket you want as the master socket. That maps it, including the
+socket's USB 2.0 side, which the kernel reports as the port's peer. Remove
+the drive and the cloner is ready. No keyboard needed.
+
 From now on the box boots into the cloner. Log in over SSH for maintenance.
+
+## Moving the drive to another machine
+
+The config remembers which machine it was mapped on. Boot the drive in a
+different box and the screen runs the one-stick mapping again, because USB
+port numbers are specific to the controller. Nothing else is hardware
+specific: the network config takes DHCP on any wired interface, and the
+EFI fallback loader is in place so firmware finds the drive without a
+boot entry. Secure Boot on or off both work, the Ubuntu shim is signed.
 
 ## Daily use
 
@@ -112,8 +117,8 @@ master's model, size and hash prefix and the result.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| "no master port mapped" | `usb-cloner-map` never run | Run it over SSH or on tty2 (Ctrl-Alt-F2) |
-| Master in front port but shown as a target | Port path differs for USB 2.0 vs 3.x drives | Run `usb-cloner-map` again with that drive |
+| Screen asks to map the master socket | First start, or the drive is in a new machine | Follow it: remove all drives, insert one in the master socket, remove it |
+| Master in front socket but shown as a target | Mapping done behind a hub, so no peer port | Map again with the stick directly in the socket, or run `sudo usb-cloner-map` over SSH |
 | Target listed as "SKIP: mounted" | Something auto-mounted it | `apt-get purge udisks2`; never install a desktop on this box |
 | Black screen, no cloner | Service not running | `systemctl status usb-cloner`, `journalctl -u usb-cloner` |
 | Slow batch | One slow stick, or a USB 2.0 rear port | Check link speed with `usb-cloner-map`; move stick |

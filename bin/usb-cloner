@@ -11,15 +11,20 @@
 set -euo pipefail
 
 CONF=/etc/usb-cloner/cloner.conf
-MASTER_PORTS=""        # space-separated ID_PATH prefixes, set by usb-cloner-map
+MASTER_PORTS=""        # space-separated sysfs port keys, set by usb-cloner-map
+HW_ID=""               # machine the ports were mapped on, set by usb-cloner-map
 TRIGGER=master         # master | countdown | enter   (see cloner.conf.example)
 AUTOSTART_SECONDS=5    # grace period before an automatic start
 BLOCK_SIZE=4M
 VERIFY=1
 LOG_DIR=/var/log/usb-cloner
 GO_FILE=/run/usb-cloner/go   # `usb-cloner go` touches this to start the batch
-# shellcheck disable=SC1090
-[[ -r $CONF ]] && . "$CONF"
+load_conf() {
+    # shellcheck disable=SC1090
+    [[ -r $CONF ]] && . "$CONF"
+    return 0
+}
+load_conf
 
 # Ubuntu 25.10+ ships the Rust coreutils rewrite as dd. Its 0.8.0 fails every
 # iflag=direct read with EINVAL and ignores count_bytes. GNU dd is installed
@@ -104,10 +109,15 @@ scan() {
 
 # ---------- UI ----------
 
+hw_id() {
+    cat /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/product_version 2>/dev/null \
+        | tr -s ' \n' ' ' | sed 's/ $//'
+}
+
 banner() {
     clear
-    printf '=== USB CLONER ===  master port -> all other USB ports, sector for sector\n'
-    printf 'Master ports: %s\n' "${MASTER_PORTS:-NONE MAPPED (run usb-cloner-map)}"
+    printf '=== USB CLONER ===  master socket -> all other USB sockets, sector for sector\n'
+    printf 'Machine: %s    Master ports: %s\n' "$(hw_id)" "${MASTER_PORTS:-NONE MAPPED}"
     case $TRIGGER in
         master)    printf 'Start: blanks in first, then insert the master (or: usb-cloner go)\n\n' ;;
         countdown) printf 'Start: automatically %ds after the last drive is inserted (or: usb-cloner go)\n\n' "$AUTOSTART_SECONDS" ;;
@@ -307,8 +317,18 @@ wait_until_targets_removed() {
 # ---------- main loop ----------
 
 [[ $EUID -eq 0 ]] || die "must run as root"
-[[ -n $MASTER_PORTS ]] || { banner; die "no master port mapped. Run: usb-cloner-map"; }
 mkdir -p "$(dirname "$GO_FILE")"; rm -f "$GO_FILE"
+
+# No map yet, or the drive woke up in a different machine: map the master
+# socket on screen (one stick insertion, no keyboard), then carry on.
+if [[ -z $MASTER_PORTS || $HW_ID != "$(hw_id)" ]]; then
+    clear
+    [[ -n $MASTER_PORTS ]] && printf 'Hardware changed (was: %s). The master socket must be mapped again.\n\n' "$HW_ID"
+    usb-cloner-map
+    load_conf
+    [[ -n $MASTER_PORTS ]] || die "mapping failed"
+    sleep 2
+fi
 
 # TRIGGER=master: "armed" means the master has been absent since the last
 # batch, so its next appearance is a deliberate "go". Starts disarmed, so a
