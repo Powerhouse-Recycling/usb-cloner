@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# usb-cloner-map: record which physical USB port is the MASTER port.
+#
+# The cloner identifies ports by their kernel path, not by /dev name, so the
+# master drive is never mistaken for a blank. One physical socket shows up on
+# two different paths depending on whether the drive in it is USB 2.0 or
+# USB 3.x, so run this once with each kind of drive if you have both.
+
+set -euo pipefail
+
+CONF=/etc/usb-cloner/cloner.conf
+[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
+mkdir -p "$(dirname "$CONF")"
+touch "$CONF"
+
+usb_disks() { lsblk -dnpo NAME,TRAN,TYPE | awk '$2 == "usb" && $3 == "disk" { print $1 }'; }
+port_of() {
+    local p
+    p=$(udevadm info -q property -n "$1" | sed -n 's/^ID_PATH=//p')
+    printf '%s' "${p%%-scsi-*}"
+}
+# USB link speed in Mbit/s from sysfs (480 = USB 2.0, 5000/10000 = USB 3.x).
+speed_of() {
+    local s
+    s=/sys$(udevadm info -q path -n "$1")
+    while [[ $s != / && ! -r $s/speed ]]; do s=$(dirname "$s"); done
+    [[ -r $s/speed ]] && cat "$s/speed" || echo "?"
+}
+current_masters() { sed -n 's/^MASTER_PORTS="\(.*\)"$/\1/p' "$CONF"; }
+
+echo "Master ports currently mapped: $(current_masters)"
+echo
+echo "1. Remove ALL USB drives from the machine."
+read -r -p "   Press Enter when done. "
+baseline=$(usb_disks | sort)
+
+echo "2. Insert ONE drive into the port you want as the MASTER port (front)."
+while :; do
+    now=$(usb_disks | sort)
+    new=$(comm -13 <(printf '%s\n' "$baseline") <(printf '%s\n' "$now") | head -n1)
+    [[ -n $new ]] && break
+    sleep 1
+done
+sleep 1   # let udev finish
+port=$(port_of "$new")
+speed=$(speed_of "$new")
+[[ -n $port ]] || { echo "could not read ID_PATH for $new" >&2; exit 1; }
+
+echo "   Found $new on port $port (link speed ${speed} Mbit/s)"
+
+masters=$(current_masters)
+case " $masters " in
+    *" $port "*) echo "   Already mapped." ;;
+    *)
+        masters="${masters:+$masters }$port"
+        if grep -q '^MASTER_PORTS=' "$CONF"; then
+            sed -i "s|^MASTER_PORTS=.*|MASTER_PORTS=\"$masters\"|" "$CONF"
+        else
+            printf 'MASTER_PORTS="%s"\n' "$masters" >> "$CONF"
+        fi
+        echo "   Saved. Master ports: $masters"
+        ;;
+esac
+
+echo
+if [[ $speed == 480 ]]; then
+    echo "That was a USB 2.0 drive. Run this again with a USB 3.x drive in the same socket"
+else
+    echo "That was a USB 3.x drive. Run this again with a USB 2.0 drive in the same socket"
+fi
+echo "so both kinds are recognised as the master. Then: systemctl restart usb-cloner"

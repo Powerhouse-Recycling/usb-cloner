@@ -1,0 +1,16 @@
+# /etc/usb-cloner/cloner.conf  (sourced by bash)
+
+# Physical port(s) that hold the MASTER drive. Set by `usb-cloner-map`.
+# Everything else on USB is treated as a blank and will be overwritten.
+MASTER_PORTS=""
+
+# 0 = wait for Enter on the keyboard before writing.
+# N = start automatically N seconds after master + targets are detected
+#     (for running without a keyboard; removing a drive aborts the countdown).
+AUTOSTART_SECONDS=0
+
+# Read back every target and compare its hash to the master's. Keep this on.
+VERIFY=1
+
+BLOCK_SIZE=4M
+LOG_DIR=/var/log/usb-cloner
