@@ -21,6 +21,11 @@ GO_FILE=/run/usb-cloner/go   # `usb-cloner go` touches this to start the batch
 # shellcheck disable=SC1090
 [[ -r $CONF ]] && . "$CONF"
 
+# Ubuntu 25.10+ ships the Rust coreutils rewrite as dd. Its 0.8.0 fails every
+# iflag=direct read with EINVAL and ignores count_bytes. GNU dd is installed
+# alongside as gnudd; prefer it. Reads for verification avoid dd entirely.
+DD=$(command -v gnudd || command -v dd)
+
 # `usb-cloner go`: start the current batch from another shell (e.g. over SSH).
 if [[ ${1:-} == go ]]; then
     [[ $EUID -eq 0 ]] || { echo "must run as root: sudo usb-cloner go" >&2; exit 1; }
@@ -195,7 +200,7 @@ clone_all() {
         d=${TARGETS[$i]}
         mkfifo "$TMP/t$i"
         fifos+=("$TMP/t$i")
-        dd of="$d" bs="$BLOCK_SIZE" iflag=fullblock oflag=direct conv=fsync status=none < "$TMP/t$i" &
+        "$DD" of="$d" bs="$BLOCK_SIZE" iflag=fullblock oflag=direct conv=fsync status=none < "$TMP/t$i" 2>"$TMP/w$i.err" &
         wpids[i]=$!
         BG_PIDS+=("$!")
     done
@@ -209,7 +214,7 @@ clone_all() {
     if command -v pv >/dev/null; then
         pv -s "$msize" -N master "$MASTER" | tee -p "${fifos[@]}" "$TMP/hash" > /dev/null || rc=$?
     else
-        dd if="$MASTER" bs="$BLOCK_SIZE" iflag=fullblock status=progress | tee -p "${fifos[@]}" "$TMP/hash" > /dev/null || rc=$?
+        "$DD" if="$MASTER" bs="$BLOCK_SIZE" iflag=fullblock status=progress | tee -p "${fifos[@]}" "$TMP/hash" > /dev/null || rc=$?
     fi
     (( rc != 0 )) && printf '!! read error on master (exit %d). Results below are unreliable.\n' "$rc"
 
@@ -217,7 +222,7 @@ clone_all() {
         if wait "${wpids[$i]}"; then
             RESULT[i]=written
         else
-            RESULT[i]="WRITE FAILED"
+            RESULT[i]="WRITE FAILED: $(tail -n1 "$TMP/w$i.err" 2>/dev/null | cut -c1-60)"
         fi
     done
     wait
@@ -237,9 +242,10 @@ verify_all() {
     for i in "${ELIGIBLE[@]}"; do
         [[ ${RESULT[$i]} == written ]] || continue
         d=${TARGETS[$i]}
-        # iflag=direct: read from the flash, not the page cache.
-        dd if="$d" bs="$BLOCK_SIZE" iflag=direct,count_bytes count="$msize" status=none 2>"$TMP/v$i.err" \
-            | sha256sum | cut -d' ' -f1 > "$TMP/v$i" &
+        # Drop this device's cached blocks so the read comes from the flash.
+        # (Writes were O_DIRECT so there is little cached anyway.)
+        blockdev --flushbufs "$d"
+        head -c "$msize" "$d" 2>"$TMP/v$i.err" | sha256sum | cut -d' ' -f1 > "$TMP/v$i" &
         vpids[i]=$!
         BG_PIDS+=("$!")
         n=$((n + 1))
@@ -258,7 +264,8 @@ verify_all() {
         if [[ $(cat "$TMP/v$i") == "$MASTER_SHA" ]]; then
             RESULT[i]=PASS
         else
-            RESULT[i]="VERIFY FAILED"
+            RESULT[i]="VERIFY FAILED: $(tail -n1 "$TMP/v$i.err" 2>/dev/null | cut -c1-60)"
+            RESULT[i]=${RESULT[$i]%: }
         fi
     done
     printf 'Verify done in %ds.\n' "$(( $(date +%s) - start ))"

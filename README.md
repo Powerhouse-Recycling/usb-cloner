@@ -117,3 +117,4 @@ master's model, size and hash prefix and the result.
 | Target listed as "SKIP: mounted" | Something auto-mounted it | `apt-get purge udisks2`; never install a desktop on this box |
 | Black screen, no cloner | Service not running | `systemctl status usb-cloner`, `journalctl -u usb-cloner` |
 | Slow batch | One slow stick, or a USB 2.0 rear port | Check link speed with `usb-cloner-map`; move stick |
+| Every target "VERIFY FAILED" on a fresh install | Rust coreutils `dd` (Ubuntu 25.10+) cannot do direct reads | Fixed in the script: it uses `gnudd` when present and reads back with `head`. Check `which gnudd` |
