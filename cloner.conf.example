@@ -22,3 +22,15 @@ VERIFY=1
 
 BLOCK_SIZE=4M
 LOG_DIR=/var/log/usb-cloner
+
+# SCSI command timeout, in seconds, applied to every drive in a batch (the
+# kernel default is 30). A stick that stops answering is retried for several
+# timeouts before the kernel drops it, and the whole batch waits meanwhile:
+# 30 s means about four minutes of nothing on screen, 10 s about one.
+DEVICE_TIMEOUT=10
+
+# Optional hook for a light, a push message or a beep. Run in the background
+# as:  NOTIFY_CMD <state> <text>   with state one of
+#   running | verifying | pass | fail | idle
+# See notify.example.sh for a USB light (blink(1)), ntfy push and a beep.
+#NOTIFY_CMD=/etc/usb-cloner/notify.sh

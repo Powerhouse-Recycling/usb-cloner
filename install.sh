@@ -14,7 +14,10 @@ fi
 install -m 755 bin/usb-cloner bin/usb-cloner-map /usr/local/bin/
 install -d -m 755 /etc/usb-cloner /var/log/usb-cloner
 [[ -e /etc/usb-cloner/cloner.conf ]] || install -m 644 cloner.conf.example /etc/usb-cloner/cloner.conf
+install -m 755 notify.example.sh /etc/usb-cloner/notify.example.sh
 install -m 644 systemd/usb-cloner.service /etc/systemd/system/usb-cloner.service
+install -m 644 sysctl/90-usb-cloner.conf /etc/sysctl.d/90-usb-cloner.conf
+sysctl -q -p /etc/sysctl.d/90-usb-cloner.conf || true
 
 systemctl daemon-reload
 systemctl enable usb-cloner.service

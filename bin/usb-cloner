@@ -19,6 +19,8 @@ BLOCK_SIZE=4M
 VERIFY=1
 LOG_DIR=/var/log/usb-cloner
 GO_FILE=/run/usb-cloner/go   # `usb-cloner go` touches this to start the batch
+DEVICE_TIMEOUT=10      # SCSI command timeout (s) set on every drive in a batch
+NOTIFY_CMD=""          # optional: run with <state> <text> on each state change
 load_conf() {
     # shellcheck disable=SC1090
     [[ -r $CONF ]] && . "$CONF"
@@ -88,7 +90,8 @@ in_use() {
     return 1
 }
 
-size_of()  { blockdev --getsize64 "$1"; }
+# 0 when the drive has just been pulled, so a scan never aborts the loop.
+size_of()  { blockdev --getsize64 "$1" 2>/dev/null || echo 0; }
 # "USB3" or "USB2" from the negotiated link speed in sysfs. A USB 3 stick
 # seated slowly often links at USB 2.0 and runs at a third of its speed.
 link_of() {
@@ -99,6 +102,44 @@ link_of() {
 }
 model_of() { lsblk -dno VENDOR,MODEL "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'; }
 human()    { numfmt --to=iec --suffix=B "$1"; }
+
+# A stick that stops answering is retried by the kernel for several full
+# timeouts (default 30 s each) before it is dropped, and the whole fan-out
+# waits on it. A short timeout turns a 4 minute stall into about a minute.
+set_timeout() {
+    local f=/sys/block/${1#/dev/}/device/timeout
+    [[ -w $f ]] && echo "$DEVICE_TIMEOUT" > "$f" 2>/dev/null || true
+}
+
+# External hook (USB light, push message, beep): NOTIFY_CMD <state> <text>.
+# States: idle, running, verifying, pass, fail. Never blocks the batch.
+notify() {
+    [[ -n $NOTIFY_CMD ]] || return 0
+    "$NOTIFY_CMD" "$@" >/dev/null 2>&1 &
+}
+
+# Prints a notice once per writer that stops making progress, so a wedged
+# batch does not look like a hung machine. Runs in the background.
+stall_monitor() {
+    local -A last stuck
+    local p n dev
+    while sleep 15; do
+        for p in "$@"; do
+            [[ -d /proc/$p ]] || continue
+            n=$(awk '/^write_bytes/ {print $2}' "/proc/$p/io" 2>/dev/null) || continue
+            if [[ ${last[$p]:-} == "$n" ]]; then
+                stuck[$p]=$(( ${stuck[$p]:-0} + 15 ))
+                if (( stuck[$p] == 45 )); then
+                    dev=$(readlink "/proc/$p/fd/1" 2>/dev/null)
+                    printf '\n!! %s stopped responding (no progress for %ds). The kernel is resetting it;\n' "$dev" "${stuck[$p]}"
+                    printf '   every drive waits until it is dropped, usually about a minute. It will be reported FAILED.\n'
+                fi
+            else
+                last[$p]=$n; stuck[$p]=0
+            fi
+        done
+    done
+}
 
 # Fills MASTER, MASTER_PORT, TARGETS[], TARGET_PORTS[], NOTES[].
 scan() {
@@ -216,17 +257,23 @@ clone_all() {
     RESULT=()
 
     printf 'Cloning %s (%s) to %d drive(s)...\n' "$MASTER" "$(human "$msize")" "${#ELIGIBLE[@]}"
+    notify running "cloning $MASTER to ${#ELIGIBLE[@]} drive(s)"
     start=$(date +%s)
+    set_timeout "$MASTER"
 
     # One writer process per target, each fed from its own FIFO.
     for i in "${ELIGIBLE[@]}"; do
         d=${TARGETS[$i]}
+        set_timeout "$d"
         mkfifo "$TMP/t$i"
         fifos+=("$TMP/t$i")
         "$DD" of="$d" bs="$BLOCK_SIZE" iflag=fullblock oflag=direct conv=fsync status=none < "$TMP/t$i" 2>"$TMP/w$i.err" &
         wpids[i]=$!
         BG_PIDS+=("$!")
     done
+    stall_monitor "${wpids[@]}" &
+    local monitor=$!
+    BG_PIDS+=("$monitor")
     # One more consumer hashes the master stream so verify never re-reads it.
     mkfifo "$TMP/hash"
     sha256sum < "$TMP/hash" | cut -d' ' -f1 > "$TMP/master.sha" &
@@ -239,6 +286,7 @@ clone_all() {
     else
         "$DD" if="$MASTER" bs="$BLOCK_SIZE" iflag=fullblock status=progress | tee -p "${fifos[@]}" "$TMP/hash" > /dev/null || rc=$?
     fi
+    kill "$monitor" 2>/dev/null || true
     MASTER_FAILED=0
     if (( rc != 0 )); then
         MASTER_FAILED=1
@@ -269,12 +317,13 @@ verify_all() {
     local msize i d vpids=() start n=0
     msize=$(size_of "$MASTER")
     start=$(date +%s)
+    notify verifying "reading back ${#ELIGIBLE[@]} drive(s)"
     for i in "${ELIGIBLE[@]}"; do
         [[ ${RESULT[$i]} == written ]] || continue
         d=${TARGETS[$i]}
         # Drop this device's cached blocks so the read comes from the flash.
         # (Writes were O_DIRECT so there is little cached anyway.)
-        blockdev --flushbufs "$d"
+        blockdev --flushbufs "$d" 2>/dev/null || true
         head -c "$msize" "$d" 2>"$TMP/v$i.err" | sha256sum | cut -d' ' -f1 > "$TMP/v$i" &
         vpids[i]=$!
         BG_PIDS+=("$!")
@@ -318,8 +367,10 @@ report() {
     printf '\n'
     if (( fails == 0 )); then
         printf '>>> ALL %d PASSED <<<\n' "${#ELIGIBLE[@]}"
+        notify pass "all ${#ELIGIBLE[@]} passed"
     else
         printf '>>> %d FAILED - discard those drives <<<\n' "$fails"
+        notify fail "$fails of ${#ELIGIBLE[@]} failed"
     fi
 }
 
@@ -332,6 +383,7 @@ wait_until_targets_removed() {
         (( still )) || break
         sleep 1
     done
+    notify idle "ready for the next batch"
 }
 
 # ---------- main loop ----------

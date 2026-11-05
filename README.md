@@ -37,8 +37,9 @@ server, and skip every snap it offers.
    **SSH server** and **standard system utilities**. No desktop means no
    auto-mounting, which is what keeps inserted drives free to be written.
 5. Finish, reboot, remove the installer stick.
-6. BIOS (F1 at power-on): set *After Power Loss* to *Power On* so the box
-   comes back on its own after an outage. Optional.
+6. BIOS: set the power-loss behaviour to *Power On* (Lenovo: *After Power
+   Loss*; Dell: *Power Management > AC Recovery*). Otherwise a power blip
+   leaves the box off until someone presses the button.
 
 ## Install the cloner
 
@@ -96,6 +97,23 @@ master read (about 35 MB/s) caps all the writers together. Cheap sticks
 that are USB 2.0 devices by design show USB2 in any port; nothing fixes
 that except better sticks, and one slow stick sets the pace of its batch.
 
+A stick that stops answering mid-write stalls the whole batch, because the
+master stream waits for every writer. After 45 s the screen names the drive
+and says the kernel is dropping it; the batch resumes without it about a
+minute later and reports it `WRITE FAILED`. The same stick also stalls the
+boot (LVM scans every disk) for the same minutes. Throw it away.
+
+## Done light, push message or beep
+
+`NOTIFY_CMD` in the config names a script that is run with a state
+(`running`, `verifying`, `pass`, `fail`, `idle`) and a short text.
+`notify.example.sh` (installed to `/etc/usb-cloner/notify.example.sh`)
+drives a blink(1) USB light, sends an ntfy push and beeps the box's own
+speaker; copy it to `/etc/usb-cloner/notify.sh`, keep the parts you use,
+and set `NOTIFY_CMD=/etc/usb-cloner/notify.sh`. A USB light is not a disk,
+so it is never mistaken for a blank; any socket works, including the
+front USB-C.
+
 ## Safety rules the script enforces
 
 - Only whole disks attached over USB are ever considered. The internal
@@ -130,3 +148,6 @@ master's model, size and hash prefix and the result.
 | Black screen, no cloner | Service not running | `systemctl status usb-cloner`, `journalctl -u usb-cloner` |
 | Slow batch | One slow stick, or a USB 2.0 rear port | Check link speed with `usb-cloner-map`; move stick |
 | Every target "VERIFY FAILED" on a fresh install | Rust coreutils `dd` (Ubuntu 25.10+) cannot do direct reads | Fixed in the script: it uses `gnudd` when present and reads back with `head`. Check `which gnudd` |
+| "Cloning ..." with no progress line for minutes | One stick stopped answering; the kernel is resetting it (`journalctl -k` shows `reset high-speed USB device`) | Wait about a minute, it is dropped and reported `WRITE FAILED`. Discard that stick |
+| Boot sits on `lvm2-monitor.service` for minutes | A dead stick was plugged in at boot | Same stick as above. Boot continues once the kernel gives up on it |
+| Box found powered off, journal ends with no shutdown | Power cut (brick, cord, outlet) and BIOS left it off | Set the BIOS power-loss option to *Power On* (see OS install step 6) |
