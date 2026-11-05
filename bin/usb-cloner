@@ -41,6 +41,10 @@ fi
 TMP=""
 BG_PIDS=()
 
+# Keyboard interrupts on the console must not kill the appliance
+# (Ctrl-C mid-write would leave half-written drives reported as nothing).
+trap '' INT QUIT TSTP
+
 cleanup() {
     local p
     for p in "${BG_PIDS[@]:-}"; do

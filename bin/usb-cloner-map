@@ -61,7 +61,7 @@ set_conf() {   # set_conf KEY VALUE
 }
 
 echo "=== USB CLONER: map the MASTER socket ==="
-echo "Machine: $(hw_id)"
+echo "Machine: $(hw_id)    IP: $(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "1. Remove ALL USB drives from the machine."
 while [[ -n $(usb_disks) ]]; do sleep 1; done
