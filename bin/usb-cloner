@@ -49,12 +49,14 @@ usb_disks() {
     lsblk -dnpo NAME,TRAN,TYPE | awk '$2 == "usb" && $3 == "disk" { print $1 }'
 }
 
-# Physical port the device sits in: ID_PATH with the SCSI suffix stripped.
-# e.g. pci-0000:00:14.0-usb-0:3:1.0-scsi-0:0:0:0 -> pci-0000:00:14.0-usb-0:3:1.0
+# Physical port the device sits in, as "usb<bus>/<bus>-<port[.port]>", taken
+# from the sysfs path, e.g. usb2/2-3. The USB 2.0 and USB 3.x sides of one
+# socket are different ports on different buses (usb1/1-2 vs usb2/2-3).
+# ID_PATH is NOT used: it drops the bus number, so a USB 2.0 stick in a rear
+# port can collide with the master's path.
 port_of() {
-    local p
-    p=$(udevadm info -q property -n "$1" 2>/dev/null | sed -n 's/^ID_PATH=//p')
-    printf '%s' "${p%%-scsi-*}"
+    udevadm info -q property -n "$1" 2>/dev/null \
+        | sed -n 's|^DEVPATH=.*/\(usb[0-9]*/[0-9]*-[0-9.]*\)/.*|\1|p'
 }
 
 is_master_port() {

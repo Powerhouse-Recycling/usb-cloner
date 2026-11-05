@@ -14,10 +14,10 @@ mkdir -p "$(dirname "$CONF")"
 touch "$CONF"
 
 usb_disks() { lsblk -dnpo NAME,TRAN,TYPE | awk '$2 == "usb" && $3 == "disk" { print $1 }'; }
+# "usb<bus>/<bus>-<port>" from the sysfs path, e.g. usb2/2-3 (see usb-cloner).
 port_of() {
-    local p
-    p=$(udevadm info -q property -n "$1" | sed -n 's/^ID_PATH=//p')
-    printf '%s' "${p%%-scsi-*}"
+    udevadm info -q property -n "$1" \
+        | sed -n 's|^DEVPATH=.*/\(usb[0-9]*/[0-9]*-[0-9.]*\)/.*|\1|p'
 }
 # USB link speed in Mbit/s from sysfs (480 = USB 2.0, 5000/10000 = USB 3.x).
 speed_of() {
@@ -44,7 +44,7 @@ done
 sleep 1   # let udev finish
 port=$(port_of "$new")
 speed=$(speed_of "$new")
-[[ -n $port ]] || { echo "could not read ID_PATH for $new" >&2; exit 1; }
+[[ -n $port ]] || { echo "could not read the sysfs port of $new" >&2; exit 1; }
 
 echo "   Found $new on port $port (link speed ${speed} Mbit/s)"
 

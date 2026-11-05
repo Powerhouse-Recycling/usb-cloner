@@ -88,7 +88,8 @@ A full-size copy is made even if the master is mostly empty.
 
 - Only whole disks attached over USB are ever considered. The internal
   drive is never a candidate.
-- The master is identified by physical port, never by `/dev/sdX` letter.
+- The master is identified by physical port (USB bus and port number from
+  sysfs, e.g. `usb2/2-3`), never by `/dev/sdX` letter.
 - Anything mounted is skipped. The master being mounted aborts.
 - Two drives in master ports aborts.
 - A target smaller than the master is skipped.
