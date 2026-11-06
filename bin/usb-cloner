@@ -167,7 +167,51 @@ hw_id() {
         | tr -s ' \n' ' ' | sed 's/ $//'
 }
 
+# 5x5 block glyphs for the full-screen result; rows top to bottom, # = block.
+declare -A GLYPH=(
+    [P]='#### #   ##### #    #    '  [A]=' ### #   #######   ##   #'
+    [S]=' ####    # ###     ##### '  [F]='######    #### #    #    '
+    [I]='#####  #    #    #  #####'  [L]='#    #    #    #    #####'
+    [D]='#### #   ##   ##   ##### '  [E]='######    #### #    #####'
+    [0]=' ### #   ##   ##   # ### '  [1]='  #   ##    #    #  #####'
+    [2]=' ### #   #   #   #  #####'  [3]='####     # ###     ##### '
+    [4]='#  # #  # #####   #    # '  [5]='######    ####     ##### '
+    [6]=' ### #    #### #   # ### '  [7]='#####    #   #   #    #  '
+    [8]=' ### #   # ### #   # ### '  [9]=' ### #   # ####    # ### '
+    [/]='    #   #   #   #   #    '  [' ']='                         '
+)
+
+# Paints the console one colour (green = every drive passed, red = any
+# failure) with the verdict in block letters, so the result reads from
+# across the room. The screen stays like this until the drives are pulled.
+result_screen() {
+    local ok=$1 text=$2 cols lines cw rh row c ch g line
+    read -r lines cols < <(stty size 2>/dev/null || echo 25 80)
+    (( cols >= 60 )) || cols=80
+    cw=1; (( cols >= 100 )) && cw=2; (( cols >= 200 )) && cw=3   # cell width
+    rh=1; (( lines >= 50 )) && rh=2                                # cell height
+    if (( ok )); then printf '\e[42;1;97m'; else printf '\e[41;1;97m'; fi
+    printf '\e[2J\e[H\n'
+    for row in 0 1 2 3 4; do
+        line=""
+        for (( c = 0; c < ${#text}; c++ )); do
+            ch=${text:$c:1}
+            g=${GLYPH[$ch]:-${GLYPH[' ']}}
+            g=${g:$(( row * 5 )):5}
+            g=${g//\#/$(printf '%*s' "$cw" '' | tr ' ' '#')}
+            g=${g// /$(printf '%*s' "$cw" '')}
+            line+="$g "
+        done
+        line=${line//\#/█}
+        for (( c = 0; c < rh; c++ )); do
+            printf '%*s%s\n' "$(( (cols - ${#line}) / 2 ))" '' "$line"
+        done
+    done
+    printf '\n'
+}
+
 banner() {
+    printf '\e[0m'
     clear
     printf '=== USB CLONER ===  master socket -> all other USB sockets, sector for sector\n'
     printf 'Machine: %s    IP: %s    Master ports: %s\n' "$(hw_id)" "$(hostname -I 2>/dev/null | awk '{print $1}')" "${MASTER_PORTS:-NONE MAPPED}"
@@ -355,22 +399,27 @@ report() {
     ts=$(date '+%Y-%m-%d %H:%M:%S')
     mkdir -p "$LOG_DIR"
     log="$LOG_DIR/$(date +%Y-%m).log"
-    printf '\n%-10s %-12s %-4s %s\n' DEVICE PORT LINK RESULT
+    local fails n=${#ELIGIBLE[@]}
+    fails=$(printf '%s\n' "${RESULT[@]}" | grep -vc '^PASS' || true)
+    if (( fails == 0 )); then
+        result_screen 1 "PASS $n/$n"
+    else
+        result_screen 0 "FAIL $fails/$n"
+    fi
+    printf '%-10s %-12s %-4s %s\n' DEVICE PORT LINK RESULT
     for i in "${ELIGIBLE[@]}"; do
         d=${TARGETS[$i]}
         line=$(printf '%-10s %-12s %-4s %s' "$d" "${TARGET_PORTS[$i]}" "$(link_of "$d")" "${RESULT[$i]}")
         printf '%s\n' "$line"
         printf '%s master=%s(%s) sha=%s %s\n' "$ts" "$(model_of "$MASTER")" "$(human "$(size_of "$MASTER")")" "${MASTER_SHA:0:16}" "$line" >> "$log"
     done
-    local fails
-    fails=$(printf '%s\n' "${RESULT[@]}" | grep -vc '^PASS' || true)
     printf '\n'
     if (( fails == 0 )); then
-        printf '>>> ALL %d PASSED <<<\n' "${#ELIGIBLE[@]}"
-        notify pass "all ${#ELIGIBLE[@]} passed"
+        printf '>>> ALL %d PASSED <<<\n' "$n"
+        notify pass "all $n passed"
     else
         printf '>>> %d FAILED - discard those drives <<<\n' "$fails"
-        notify fail "$fails of ${#ELIGIBLE[@]} failed"
+        notify fail "$fails of $n failed"
     fi
 }
 
@@ -383,6 +432,8 @@ wait_until_targets_removed() {
         (( still )) || break
         sleep 1
     done
+    printf '\e[0m'
+    clear
     notify idle "ready for the next batch"
 }
 

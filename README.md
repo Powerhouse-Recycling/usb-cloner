@@ -75,7 +75,9 @@ boot entry. Secure Boot on or off both work, the Ubuntu shim is signed.
    Blanks smaller than the master are listed as SKIP and left untouched.
 2. Master in the front port. A 5 second countdown starts; pulling any drive
    aborts it. Then progress shows for the write, and dots for the verify.
-3. Read the result table: `PASS`, `WRITE FAILED` or `VERIFY FAILED` per port.
+3. The whole screen turns **green** with `PASS 4/4` in block letters, or
+   **red** with `FAIL 1/4`, readable from across the room. Below it the
+   result table says `PASS`, `WRITE FAILED` or `VERIFY FAILED` per port.
    Throw away failed drives.
 4. Pull the master and the blanks. The screen resets for the next batch.
 
